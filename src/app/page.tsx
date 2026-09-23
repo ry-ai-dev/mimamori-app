@@ -1,69 +1,116 @@
-import Image from "next/image";
+import { createClient } from '@/lib/supabase/server';
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
-export default function Home() {
+const STATUS_LABELS: Record<string, string> = {
+  ok: '元気です',
+};
+const FALLBACK_STATUS_LABEL = '応答あり';
+
+function isSameLocalDay(a: Date, b: Date) {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+export default async function Home() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  const { data: watchees } = await supabase
+    .from('watchees')
+    .select('id, name, line_user_id, created_at')
+    .order('created_at', { ascending: false });
+
+  const latestByWatchee = new Map<string, { responded_at: string; status: string }>();
+
+  if (watchees && watchees.length > 0) {
+    const watcheeIds = watchees.map((w) => w.id);
+    const { data: responses } = await supabase
+      .from('responses')
+      .select('watchee_id, responded_at, status')
+      .in('watchee_id', watcheeIds)
+      .order('responded_at', { ascending: false });
+
+    for (const r of responses ?? []) {
+      if (!latestByWatchee.has(r.watchee_id)) {
+        latestByWatchee.set(r.watchee_id, r);
+      }
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-2xl px-4 py-10">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">ダッシュボード</h1>
+        <Link
+          href="/watchees"
+          className="text-sm text-zinc-600 underline dark:text-zinc-400"
+        >
+          対象者を管理する →
+        </Link>
+      </div>
+
+      {!watchees || watchees.length === 0 ? (
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          まだ見守り対象者が登録されていません。「対象者を管理する」から追加してください。
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {watchees.map((watchee) => {
+            const latest = latestByWatchee.get(watchee.id);
+            const now = new Date();
+
+            return (
+              <li key={watchee.id}>
+                <Link
+                  href={`/watchees/${watchee.id}`}
+                  className="flex flex-col gap-1 rounded-lg border border-zinc-200 bg-white px-4 py-3 hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <span className="font-medium text-zinc-900 dark:text-zinc-50">{watchee.name}</span>
+
+                  <span
+                    className={
+                      watchee.line_user_id
+                        ? 'text-sm text-green-700 dark:text-green-400'
+                        : 'text-sm text-zinc-500 dark:text-zinc-500'
+                    }
+                  >
+                    {watchee.line_user_id ? 'LINE連携済み' : 'LINE未連携'}
+                  </span>
+
+                  {!latest ? (
+                    <span className="text-sm text-zinc-500 dark:text-zinc-500">まだ応答がありません</span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={
+                          isSameLocalDay(new Date(latest.responded_at), now)
+                            ? 'text-sm text-green-700 dark:text-green-400'
+                            : 'text-sm text-amber-700 dark:text-amber-400'
+                        }
+                      >
+                        {STATUS_LABELS[latest.status] ?? FALLBACK_STATUS_LABEL}
+                      </span>
+                      <span className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {new Date(latest.responded_at).toLocaleString('ja-JP')}
+                      </span>
+                    </span>
+                  )}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
